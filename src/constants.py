@@ -57,11 +57,12 @@ HUD_ACCENT = (255, 193, 7)
 
 # ==================== 坦克配置 ====================
 TANK_SIZE = GRID_SIZE * 2  # 40x40
+MOVE_COOLDOWN_BASE = 150   # 移动冷却基准(ms)，实际=BASE/speed
 
 # 玩家坦克
 PLAYER_HEALTH = 3
 PLAYER_LIVES = 3
-PLAYER_SPEED = 1
+PLAYER_SPEED = 1.0           # 移动冷却 = 150ms → 约6.7格/秒
 PLAYER_FIRE_COOLDOWN = 300   # 毫秒
 PLAYER_BULLET_SPEED = 6
 PLAYER_BULLET_DAMAGE = 1
@@ -78,7 +79,7 @@ PLAYER_UPGRADES = {
 ENEMY_TYPES = {
     "basic": {
         "health": 1,
-        "speed": 1,
+        "speed": 0.5,            # 冷却300ms → 约3.3格/秒，较慢
         "fire_cooldown": 2500,
         "bullet_speed": 4,
         "bullet_damage": 1,
@@ -89,7 +90,7 @@ ENEMY_TYPES = {
     },
     "fast": {
         "health": 1,
-        "speed": 2,
+        "speed": 0.85,           # 冷却176ms → 约5.7格/秒，接近玩家
         "fire_cooldown": 1800,
         "bullet_speed": 5,
         "bullet_damage": 1,
@@ -100,7 +101,7 @@ ENEMY_TYPES = {
     },
     "power": {
         "health": 2,
-        "speed": 1,
+        "speed": 0.45,           # 冷却333ms → 约3格/秒
         "fire_cooldown": 1200,
         "bullet_speed": 7,
         "bullet_damage": 2,
@@ -111,7 +112,7 @@ ENEMY_TYPES = {
     },
     "armor": {
         "health": 4,
-        "speed": 0.8,
+        "speed": 0.35,           # 冷却428ms → 约2.3格/秒，很慢但很硬
         "fire_cooldown": 2000,
         "bullet_speed": 5,
         "bullet_damage": 1,

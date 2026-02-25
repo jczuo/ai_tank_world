@@ -51,6 +51,7 @@ class Tank(pygame.sprite.Sprite):
         self.speed = PLAYER_SPEED
         self.fire_cooldown = PLAYER_FIRE_COOLDOWN
         self.last_fire_time = 0
+        self.last_move_time = 0
         self.star_level = 0
         self.shielded = False
 
@@ -129,6 +130,12 @@ class Tank(pygame.sprite.Sprite):
             self.direction = new_dir
             self._rotate_image()
             return
+
+        now = pygame.time.get_ticks()
+        cooldown = int(MOVE_COOLDOWN_BASE / max(self.speed, 0.1))
+        if now - self.last_move_time < cooldown:
+            return
+        self.last_move_time = now
 
         new_gx = self.grid_x + dx
         new_gy = self.grid_y + dy
