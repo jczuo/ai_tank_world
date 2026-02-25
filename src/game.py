@@ -2,8 +2,7 @@ import pygame
 import random
 from constants import *
 from tank import Tank, EnemyTank
-from bullet import Bullet
-from terrain import create_terrain, Forest, Base, Water, Ice, BrickWall, SteelWall
+from terrain import create_terrain, Forest, Base, Water, Ice
 from powerup import PowerUp
 from effects import Explosion, SpawnEffect, ShieldEffect
 from level import get_level, get_enemy_list, LEVELS

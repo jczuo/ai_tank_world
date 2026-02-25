@@ -1,7 +1,6 @@
 import os
 import pygame
 import random
-import math
 from constants import *
 from bullet import Bullet
 
@@ -29,7 +28,6 @@ def _draw_tank_body(surface, body_color, turret_color, size):
     pygame.draw.rect(surface, turret_color, (tx, ty, tw, th))
     # 炮管
     barrel_w = 4
-    barrel_h = s // 2
     bx = (s - barrel_w) // 2
     pygame.draw.rect(surface, turret_color, (bx, 0, barrel_w, ty + 2))
     pygame.draw.rect(surface, (min(255, turret_color[0] + 40),
@@ -116,7 +114,6 @@ class Tank(pygame.sprite.Sprite):
 
     def _bullet_start(self):
         cx, cy = self.rect.centerx, self.rect.centery
-        half = TANK_SIZE // 2
         if self.direction == "up":
             return cx, self.rect.top
         elif self.direction == "down":
