@@ -1,182 +1,329 @@
 import os
 import pygame
 import random
+import math
 from constants import *
 from bullet import Bullet
-from brick import SmallBrick, Brick
+
+
+def _draw_tank_body(surface, body_color, turret_color, size):
+    """程序化绘制坦克图形 (朝上)"""
+    s = size
+    surface.fill((0, 0, 0, 0))
+    # 履带
+    track_color = (60, 60, 60)
+    pygame.draw.rect(surface, track_color, (1, 2, 8, s - 4))
+    pygame.draw.rect(surface, track_color, (s - 9, 2, 8, s - 4))
+    for i in range(2, s - 4, 5):
+        pygame.draw.line(surface, (40, 40, 40), (1, i), (9, i), 1)
+        pygame.draw.line(surface, (40, 40, 40), (s - 9, i), (s - 1, i), 1)
+    # 车体
+    pygame.draw.rect(surface, body_color, (7, 4, s - 14, s - 8))
+    lighter = tuple(min(255, c + 30) for c in body_color[:3])
+    pygame.draw.rect(surface, lighter, (9, 6, s - 18, s - 12))
+    # 炮塔
+    tw = s // 3
+    th = s // 3
+    tx = (s - tw) // 2
+    ty = (s - th) // 2
+    pygame.draw.rect(surface, turret_color, (tx, ty, tw, th))
+    # 炮管
+    barrel_w = 4
+    barrel_h = s // 2
+    bx = (s - barrel_w) // 2
+    pygame.draw.rect(surface, turret_color, (bx, 0, barrel_w, ty + 2))
+    pygame.draw.rect(surface, (min(255, turret_color[0] + 40),
+                                min(255, turret_color[1] + 40),
+                                min(255, turret_color[2] + 40)),
+                     (bx + 1, 0, barrel_w - 2, ty + 2))
+
 
 class Tank(pygame.sprite.Sprite):
-    def __init__(self, x, y, color):
-        super().__init__()
-        self.load_image(color)
-        self.rect = self.image.get_rect()
-        self.grid_x = x // GRID_SIZE
-        self.grid_y = y // GRID_SIZE
-        self.rect.x = self.grid_x * GRID_SIZE
-        self.rect.y = self.grid_y * GRID_SIZE
-        self.direction = "up"
-        self.color = color
-        self.health = 5  # 玩家坦克生命值为5
+    """玩家坦克"""
 
-    def load_image(self, color):
+    def __init__(self, grid_x, grid_y):
+        super().__init__()
+        self.grid_x = grid_x
+        self.grid_y = grid_y
+        self.direction = "up"
+
+        # 属性
+        self.max_health = PLAYER_HEALTH
+        self.health = self.max_health
+        self.speed = PLAYER_SPEED
+        self.fire_cooldown = PLAYER_FIRE_COOLDOWN
+        self.last_fire_time = 0
+        self.star_level = 0
+        self.shielded = False
+
+        # 画坦克
+        self._build_image(GREEN, DARK_GREEN)
+        self.rect = self.image.get_rect()
+        self.rect.x = grid_x * GRID_SIZE
+        self.rect.y = grid_y * GRID_SIZE
+
+        # 冰面滑行
+        self.sliding = False
+        self.slide_dx = 0
+        self.slide_dy = 0
+
+    def _build_image(self, body_color, turret_color):
+        self.original_image = pygame.Surface((TANK_SIZE, TANK_SIZE), pygame.SRCALPHA)
+        # 尝试加载图片，失败则程序化绘制
         try:
-            if color == GREEN:
-                image_path = os.path.join("assets", "images", "tank_green.png")
+            path = os.path.join("assets", "images", "tank_green.png")
+            if os.path.exists(path):
+                img = pygame.image.load(path).convert_alpha()
+                self.original_image = pygame.transform.scale(img, (TANK_SIZE, TANK_SIZE))
             else:
-                image_path = os.path.join("assets", "images", "tank_red.png")
-            
-            print(f"尝试加载图片：{image_path}")
-            if os.path.exists(image_path):
-                self.original_image = pygame.image.load(image_path).convert_alpha()
-                self.original_image = pygame.transform.scale(self.original_image, (TANK_SIZE, TANK_SIZE))
-                print(f"成功加载图片：{image_path}")
-            else:
-                print(f"图片文件不存在：{image_path}")
-                raise FileNotFoundError(f"找不到图片文件：{image_path}")
-        except Exception as e:
-            print(f"加载图片时出错：{e}")
-            print("使用纯色方块代替贴图")
-            self.original_image = pygame.Surface((TANK_SIZE, TANK_SIZE))
-            self.original_image.fill(color)
-        
+                raise FileNotFoundError
+        except Exception:
+            _draw_tank_body(self.original_image, body_color, turret_color, TANK_SIZE)
         self.image = self.original_image.copy()
 
-    def move(self, dx, dy, bricks, enemy_tanks):
-        new_direction = self.get_new_direction(dx, dy)
-        
-        # 如果方向改变，先更新方向和图像
-        if new_direction != self.direction:
-            self.direction = new_direction
-            self.update_image()
-            return  # 方向改变时，不移动位置
-        
-        new_grid_x = self.grid_x + dx
-        new_grid_y = self.grid_y + dy
+    def _rotate_image(self):
+        angles = {"up": 0, "down": 180, "left": 90, "right": 270}
+        self.image = pygame.transform.rotate(self.original_image, angles[self.direction])
+        old_center = self.rect.center
+        self.rect = self.image.get_rect(center=old_center)
 
-        # 检查是否超出屏幕边界
-        if 0 <= new_grid_x * GRID_SIZE < SCREEN_WIDTH - TANK_SIZE + 1 and 0 <= new_grid_y * GRID_SIZE < SCREEN_HEIGHT - TANK_SIZE + 1:
-            # 创建新位置的矩形，考虑坦克的实际大小
-            new_rect = pygame.Rect(new_grid_x * GRID_SIZE, new_grid_y * GRID_SIZE, TANK_SIZE, TANK_SIZE)
-            
-            # 检查与砖块的碰撞
-            brick_collision = any(brick.rect.colliderect(new_rect) for brick in bricks 
-                                  if isinstance(brick, (Brick, SmallBrick)) and brick.is_solid)
-            
-            # 检查与敌方坦克的碰撞
-            enemy_collision = any(enemy_tank.rect.colliderect(new_rect) for enemy_tank in enemy_tanks if enemy_tank != self)
-            
-            if not brick_collision and not enemy_collision:
-                self.grid_x = new_grid_x
-                self.grid_y = new_grid_y
-                self.rect.x = self.grid_x * GRID_SIZE
-                self.rect.y = self.grid_y * GRID_SIZE
+    @property
+    def upgrade(self):
+        return PLAYER_UPGRADES[min(self.star_level, 3)]
 
-    def get_new_direction(self, dx, dy):
+    def apply_star(self):
+        if self.star_level < 3:
+            self.star_level += 1
+
+    def can_fire(self):
+        now = pygame.time.get_ticks()
+        return now - self.last_fire_time >= self.fire_cooldown
+
+    def fire(self):
+        if not self.can_fire():
+            return None
+        self.last_fire_time = pygame.time.get_ticks()
+        x, y = self._bullet_start()
+        up = self.upgrade
+        return Bullet(x, y, self.direction,
+                      speed=up["bullet_speed"],
+                      damage=up["bullet_damage"],
+                      can_break_steel=up["can_break_steel"],
+                      owner="player")
+
+    def active_bullet_limit(self):
+        return self.upgrade["max_bullets"]
+
+    def _bullet_start(self):
+        cx, cy = self.rect.centerx, self.rect.centery
+        half = TANK_SIZE // 2
+        if self.direction == "up":
+            return cx, self.rect.top
+        elif self.direction == "down":
+            return cx, self.rect.bottom
+        elif self.direction == "left":
+            return self.rect.left, cy
+        else:
+            return self.rect.right, cy
+
+    def move(self, dx, dy, terrain_group, tank_group):
+        new_dir = self._direction_from(dx, dy)
+        if new_dir != self.direction:
+            self.direction = new_dir
+            self._rotate_image()
+            return
+
+        new_gx = self.grid_x + dx
+        new_gy = self.grid_y + dy
+
+        if not self._in_bounds(new_gx, new_gy):
+            return
+
+        new_rect = pygame.Rect(new_gx * GRID_SIZE, new_gy * GRID_SIZE,
+                                TANK_SIZE, TANK_SIZE)
+
+        if self._collides_terrain(new_rect, terrain_group):
+            return
+        if self._collides_tanks(new_rect, tank_group):
+            return
+
+        self.grid_x = new_gx
+        self.grid_y = new_gy
+        self.rect.x = new_gx * GRID_SIZE
+        self.rect.y = new_gy * GRID_SIZE
+
+    def _direction_from(self, dx, dy):
         if dx < 0:
             return "left"
-        elif dx > 0:
+        if dx > 0:
             return "right"
-        elif dy < 0:
+        if dy < 0:
             return "up"
-        elif dy > 0:
+        if dy > 0:
             return "down"
-        return self.direction  # 如果没有移动，保持当前方向
+        return self.direction
 
-    def check_collision(self, new_x, new_y, bricks, enemy_tanks):
-        # 检查是否超出屏幕边界
-        if new_x < 0 or new_x >= GRID_WIDTH or new_y < 0 or new_y >= GRID_HEIGHT:
-            return True
+    def _in_bounds(self, gx, gy):
+        return (0 <= gx * GRID_SIZE <= GAME_WIDTH - TANK_SIZE and
+                0 <= gy * GRID_SIZE <= GAME_HEIGHT - TANK_SIZE)
 
-        # 检查是否与砖块碰撞
-        for brick in bricks:
-            if brick.grid_x == new_x and brick.grid_y == new_y:
+    def _collides_terrain(self, new_rect, terrain_group):
+        for t in terrain_group:
+            if t.is_solid and t.rect.colliderect(new_rect):
                 return True
-
-        # 检查是否与敌人坦克碰撞
-        for enemy in enemy_tanks:
-            if enemy.grid_x == new_x and enemy.grid_y == new_y:
-                return True
-
         return False
 
-    def get_bullet_start_position(self):
-        if self.direction == "up":
-            return self.rect.centerx, self.rect.top
-        elif self.direction == "down":
-            return self.rect.centerx, self.rect.bottom
-        elif self.direction == "left":
-            return self.rect.left, self.rect.centery
-        elif self.direction == "right":
-            return self.rect.right, self.rect.centery
+    def _collides_tanks(self, new_rect, tank_group):
+        for tank in tank_group:
+            if tank is not self and tank.alive() and tank.rect.colliderect(new_rect):
+                return True
+        return False
 
-    def update_image(self):
-        if self.direction == "up":
-            self.image = self.original_image
-        elif self.direction == "down":
-            self.image = pygame.transform.rotate(self.original_image, 180)
-        elif self.direction == "left":
-            self.image = pygame.transform.rotate(self.original_image, 90)
-        elif self.direction == "right":
-            self.image = pygame.transform.rotate(self.original_image, 270)
-
-    def hit(self):
-        self.health -= 1
+    def hit(self, damage=1):
+        if self.shielded:
+            return False
+        self.health -= damage
         if self.health <= 0:
             self.kill()
-        return self.health <= 0
+            return True
+        return False
+
+    def is_on_ice(self, terrain_group):
+        for t in terrain_group:
+            if t.terrain_type == TERRAIN_ICE and t.rect.colliderect(self.rect):
+                return True
+        return False
+
+    def update(self, *args):
+        pass
+
 
 class EnemyTank(Tank):
-    def __init__(self, bricks):
-        print("开始初始化敌人坦克")
-        # 找到一个不与砖块重叠的位置
-        attempts = 0
-        while attempts < 100:  # 限制尝试次数，防止无限循环
-            x = random.randint(0, (SCREEN_WIDTH - TANK_SIZE) // GRID_SIZE) * GRID_SIZE
-            y = random.randint(0, (SCREEN_HEIGHT - TANK_SIZE) // GRID_SIZE) * GRID_SIZE
-            temp_rect = pygame.Rect(x, y, TANK_SIZE, TANK_SIZE)
-            if not any(brick.rect.colliderect(temp_rect) for brick in bricks if isinstance(brick, (Brick, SmallBrick)) and brick.is_solid):
-                print(f"找到合适的位置：({x}, {y})")
-                break
-            attempts += 1
-        
-        if attempts == 100:
-            print("无法找到合适的位置，使用默认位置")
-            x, y = 0, 0
+    """敌方坦克基类，支持多种类型"""
 
-        super().__init__(x, y, RED)
-        self.move_cooldown = 0
-        self.fire_cooldown = 0
-        self.health = 3  # 敌人坦克生命值为3
-        print("敌人坦克初始化完成")
+    def __init__(self, grid_x, grid_y, enemy_type="basic"):
+        self.enemy_type = enemy_type
+        cfg = ENEMY_TYPES[enemy_type]
+        super().__init__(grid_x, grid_y)
 
-    def find_empty_position(self, start_x, start_y, bricks):
-        for y in range(start_y, start_y + 3):
-            for x in range(start_x, start_x + 3):
-                rect = pygame.Rect(x * GRID_SIZE, y * GRID_SIZE, TANK_SIZE, TANK_SIZE)
-                if not self.check_collision(rect, bricks):
-                    return x, y
-        return start_x, start_y  # 如果没有找到空位,返回起始位置
+        self.max_health = cfg["health"]
+        self.health = self.max_health
+        self.speed = cfg["speed"]
+        self.fire_cooldown = cfg["fire_cooldown"]
+        self.bullet_speed = cfg["bullet_speed"]
+        self.bullet_damage = cfg["bullet_damage"]
+        self.score_value = cfg["score"]
+        self.body_color = cfg["color"]
+        self.turret_color = cfg["color_dark"]
 
-    def update(self, bricks, player):
-        # 实现敌人坦克的移动逻辑
-        dx, dy = self.get_movement_direction(player)
-        self.move(dx, dy, bricks, pygame.sprite.GroupSingle(player))
+        # AI 状态
+        self.move_timer = 0
+        self.move_interval = random.randint(500, 1500)
+        self.current_dx = 0
+        self.current_dy = 1  # 默认向下
+        self.last_move_time = pygame.time.get_ticks()
+        self.frozen = False
 
-        # 更新坦克位置
-        self.rect.x = int(self.grid_x * GRID_SIZE)
-        self.rect.y = int(self.grid_y * GRID_SIZE)
+        # 重新绘制
+        self._build_enemy_image()
+        self.rect.x = grid_x * GRID_SIZE
+        self.rect.y = grid_y * GRID_SIZE
 
-        # 实现射击逻辑
-        # ...（射击逻辑保持不变）
+    def _build_enemy_image(self):
+        self.original_image = pygame.Surface((TANK_SIZE, TANK_SIZE), pygame.SRCALPHA)
+        _draw_tank_body(self.original_image, self.body_color, self.turret_color, TANK_SIZE)
+        self.image = self.original_image.copy()
+        self._rotate_image()
 
-    def get_movement_direction(self, player):
-        # 实现简单的追踪逻辑
-        dx = 1 if player.grid_x > self.grid_x else -1 if player.grid_x < self.grid_x else 0
-        dy = 1 if player.grid_y > self.grid_y else -1 if player.grid_y < self.grid_y else 0
-        return dx, dy
+    def _update_armor_color(self):
+        if self.enemy_type == "armor":
+            color = ARMOR_HP_COLORS.get(self.health, RED)
+            darker = tuple(max(0, c - 50) for c in color[:3])
+            self.body_color = color
+            self.turret_color = darker
+            self._build_enemy_image()
 
-    def hit(self):
-        self.health -= 1
+    def hit(self, damage=1):
+        self.health -= damage
+        if self.enemy_type == "armor":
+            self._update_armor_color()
         if self.health <= 0:
             self.kill()
-        return self.health <= 0
+            return True
+        return False
+
+    def can_fire(self):
+        if self.frozen:
+            return False
+        now = pygame.time.get_ticks()
+        return now - self.last_fire_time >= self.fire_cooldown
+
+    def fire(self):
+        if not self.can_fire():
+            return None
+        self.last_fire_time = pygame.time.get_ticks()
+        x, y = self._bullet_start()
+        return Bullet(x, y, self.direction,
+                      speed=self.bullet_speed,
+                      damage=self.bullet_damage,
+                      owner="enemy")
+
+    def ai_update(self, terrain_group, all_tanks, player):
+        """AI 逻辑：移动和射击"""
+        if self.frozen:
+            return None
+
+        now = pygame.time.get_ticks()
+
+        # 移动逻辑
+        if now - self.last_move_time >= self.move_interval:
+            self.last_move_time = now
+            self.move_interval = random.randint(400, 1200)
+            self._choose_direction(player)
+
+        if self.current_dx != 0 or self.current_dy != 0:
+            old_gx, old_gy = self.grid_x, self.grid_y
+            self.move(self.current_dx, self.current_dy, terrain_group, all_tanks)
+            if self.grid_x == old_gx and self.grid_y == old_gy:
+                if self.direction == self._direction_from(self.current_dx, self.current_dy):
+                    self._choose_direction(player)
+
+        # 射击逻辑
+        if self.can_fire():
+            if self._should_shoot(player):
+                return self.fire()
+        return None
+
+    def _choose_direction(self, player):
+        """选择移动方向 - 有一定概率朝玩家/基地方向移动"""
+        r = random.random()
+        if r < 0.4:
+            # 朝玩家方向
+            dx = 0
+            dy = 0
+            if abs(player.grid_x - self.grid_x) > abs(player.grid_y - self.grid_y):
+                dx = 1 if player.grid_x > self.grid_x else -1
+            else:
+                dy = 1 if player.grid_y > self.grid_y else -1
+            self.current_dx = dx
+            self.current_dy = dy
+        elif r < 0.6:
+            # 朝下(基地方向)
+            self.current_dx = 0
+            self.current_dy = 1
+        else:
+            # 随机方向
+            dirs = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+            self.current_dx, self.current_dy = random.choice(dirs)
+
+    def _should_shoot(self, player):
+        """判断是否应该射击"""
+        if self.direction == "up" and player.grid_y < self.grid_y:
+            return abs(player.grid_x - self.grid_x) <= 3
+        if self.direction == "down" and player.grid_y > self.grid_y:
+            return abs(player.grid_x - self.grid_x) <= 3
+        if self.direction == "left" and player.grid_x < self.grid_x:
+            return abs(player.grid_y - self.grid_y) <= 3
+        if self.direction == "right" and player.grid_x > self.grid_x:
+            return abs(player.grid_y - self.grid_y) <= 3
+        return random.random() < 0.3
